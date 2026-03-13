@@ -1,0 +1,31 @@
+services:
+  ollama:
+    image: ollama/ollama
+    container_name: ollama
+    ports:
+      - "11434:11434"
+    environment:
+      - OLLAMA_HOST=0.0.0.0:11434
+    volumes:
+      - ollama-data:/root/.ollama
+    restart: always
+
+  openwebui:
+    image: ghcr.io/open-webui/open-webui:main
+    container_name: openwebui
+    depends_on:
+      - ollama
+    ports:
+      - "3030:8080"
+    environment:
+      - ENABLE_OLLAMA_API=true
+      - OLLAMA_BASE_URL=http://ollama:11434
+      - WEBUI_SECRET_KEY=your_secret_key_here
+      - USER_PERMISSIONS_WORKSPACE_PROMPTS_ACCESS=true
+    volumes:
+      - openwebui-data:/app/backend/data
+    restart: always
+
+volumes:
+  ollama-data:
+  openwebui-data:
