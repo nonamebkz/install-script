@@ -1,0 +1,40 @@
+version: "3.8"
+
+services:
+  loki:
+    image: grafana/loki:3.1.1  # Latest stable 2026
+    container_name: loki
+    ports:
+      - "3101:3100"
+    command: -config.file=/etc/loki/local-config.yaml
+    volumes:
+      - ./loki-config.yaml:/etc/loki/local-config.yaml
+      - loki-data:/loki
+    restart: unless-stopped
+    networks:
+      - loki-net
+
+
+  grafana:
+    image: grafana/grafana:11.1.0
+    container_name: grafana
+    ports:
+      - "3102:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin123  # Ganti password!
+    volumes:
+      - grafana-data:/var/lib/grafana
+    restart: unless-stopped
+    networks:
+      - loki-net
+    depends_on:
+      - loki
+
+volumes:
+  loki-data:
+  grafana-data:
+
+networks:
+  loki-net:
+    driver: bridge

@@ -1,0 +1,35 @@
+auth_enabled: false
+
+server:
+  http_listen_port: 3100
+  grpc_listen_port: 9096
+
+common:
+  path_prefix: /loki
+  storage:
+    filesystem:
+      chunks_directory: /loki/chunks
+      rules_directory: /loki/rules
+  replication_factor: 1
+  ring:
+    kvstore:
+      store: inmemory
+
+limits_config:
+  allow_structured_metadata: false  # Fix error structured metadata
+
+schema_config:
+  configs:
+    - from: 2024-10-24  # Update tanggal ke recent
+      store: tsdb        # Ganti dari boltdb-shipping ke tsdb
+      object_store: filesystem
+      schema: v13        # v13 required untuk tsdb
+      index:
+        prefix: index_
+        period: 24h
+
+storage_config:
+  tsdb_shipper:
+    active_index_directory: /loki/tsdb-index
+    cache_location: /loki/tsdb-cache
+    cache_ttl: 24h

@@ -1,0 +1,27 @@
+version: "3.8"
+
+services:
+  chromadb:
+    image: chromadb/chroma:0.5.5  # Gunakan versi terbaru/stable
+    container_name: chromadb
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      ANONYMIZED_TELEMETRY: "false"
+      IS_PERSISTENT: "true"
+      PERSIST_DIRECTORY: "/chroma/chroma"
+      # Uncomment untuk enable authentication
+      # CHROMA_SERVER_AUTHN_PROVIDER: "chromadb.auth.token_authn.TokenAuthenticationServerProvider"
+      # CHROMA_SERVER_AUTHN_CREDENTIALS: "your-secret-token-here"
+    volumes:
+      - chroma_data:/chroma/chroma
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/heartbeat"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  chroma_data:
+    driver: local
