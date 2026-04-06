@@ -16,15 +16,14 @@ common:
       store: inmemory
 
 limits_config:
-  allow_structured_metadata: false
-  retention_period: 48h  # Hapus log >48h
+  allow_structured_metadata: false  # Fix error structured metadata
 
 schema_config:
   configs:
-    - from: 2024-10-24
-      store: tsdb
+    - from: 2024-10-24  # Update tanggal ke recent
+      store: tsdb        # Ganti dari boltdb-shipping ke tsdb
       object_store: filesystem
-      schema: v13
+      schema: v13        # v13 required untuk tsdb
       index:
         prefix: index_
         period: 24h
@@ -34,12 +33,3 @@ storage_config:
     active_index_directory: /loki/tsdb-index
     cache_location: /loki/tsdb-cache
     cache_ttl: 24h
-  # Hapus delete_request_cancel_period - tidak di storage_config
-
-compactor:
-  working_directory: /loki/compactor  # Persistent
-  compaction_interval: 10m
-  retention_enabled: true
-  retention_delete_delay: 2h
-  retention_delete_worker_count: 150
-  delete_request_store: filesystem  # Ganti dari shared_store [web:34]
