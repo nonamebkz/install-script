@@ -6,12 +6,9 @@ services:
     container_name: redis
     restart: unless-stopped
     ports:
-      - "6379:6379"
+      - "${REDIS_PORT:-6379}:6379"
     volumes:
-      - redis_data:/data
-    command: redis-server --requirepass your_strong_password --appendonly yes
+      - ${REDIS_DATA_DIR:-./data}:/data
+    command: redis-server --requirepass ${REDIS_PASSWORD:-your_strong_password} --appendonly yes
     environment:
-      - REDIS_PASSWORD=your_strong_password
-
-volumes:
-  redis_data:
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-your_strong_password}

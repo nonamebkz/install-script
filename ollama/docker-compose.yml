@@ -3,11 +3,11 @@ services:
     image: ollama/ollama
     container_name: ollama
     ports:
-      - "11434:11434"
+      - "${OLLAMA_PORT:-11434}:11434"
     environment:
-      - OLLAMA_HOST=0.0.0.0:11434
+      - OLLAMA_HOST=${OLLAMA_HOST:-0.0.0.0:11434}
     volumes:
-      - ollama-data:/root/.ollama
+      - ${OLLAMA_DATA_DIR:-./data/ollama}:/root/.ollama
     restart: always
 
   openwebui:
@@ -16,16 +16,12 @@ services:
     depends_on:
       - ollama
     ports:
-      - "3030:8080"
+      - "${OPENWEBUI_PORT:-3030}:8080"
     environment:
-      - ENABLE_OLLAMA_API=true
+      - ENABLE_OLLAMA_API=${ENABLE_OLLAMA_API:-true}
       - OLLAMA_BASE_URL=http://ollama:11434
-      - WEBUI_SECRET_KEY=your_secret_key_here
-      - USER_PERMISSIONS_WORKSPACE_PROMPTS_ACCESS=true
+      - WEBUI_SECRET_KEY=${WEBUI_SECRET_KEY:-your_secret_key_here}
+      - USER_PERMISSIONS_WORKSPACE_PROMPTS_ACCESS=${USER_PERMISSIONS_WORKSPACE_PROMPTS_ACCESS:-true}
     volumes:
-      - openwebui-data:/app/backend/data
+      - ${OPENWEBUI_DATA_DIR:-./data/openwebui}:/app/backend/data
     restart: always
-
-volumes:
-  ollama-data:
-  openwebui-data:

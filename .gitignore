@@ -1,0 +1,19 @@
+# Environment — gunakan .env.example sebagai template
+.env
+!.env.example
+
+# Data runtime Docker (bind mount dari docker compose)
+**/data/
+
+# Log lokal
+**/logs/
+
+# Backup & sementara
+*.bak
+*~
+*.swp
+*.tmp
+
+# OS
+.DS_Store
+Thumbs.db
