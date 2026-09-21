@@ -72,6 +72,95 @@ validate_email() {
   [[ "$email" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$ ]]
 }
 
+domain_label_count() {
+  echo "$1" | awk -F. '{print NF}'
+}
+
+is_likely_subdomain() {
+  # domain.tld = 2 label; pencatatan.rubyjane.my.id = 4 label
+  (( $(domain_label_count "$1") > 2 ))
+}
+
+dns_resolves() {
+  local host="$1"
+  command -v dig >/dev/null 2>&1 || return 0
+  dig +short "$host" A 2>/dev/null | grep -q .
+}
+
+dns_points_to_cloudflare() {
+  local host="$1" ip
+  command -v dig >/dev/null 2>&1 || return 1
+  ip="$(dig +short "$host" A 2>/dev/null | head -n1)"
+  [[ -n "$ip" ]] || return 1
+  # Cloudflare IPv4 ranges (umum)
+  [[ "$ip" =~ ^(104\.|172\.6[4-9]\.|172\.7[0-1]\.|173\.245\.|103\.21\.|103\.22\.|103\.31\.|141\.101\.|108\.162\.|190\.93\.|188\.114\.|197\.234\.|198\.41\.|162\.158\.) ]]
+}
+
+check_nginx_serves_domain() {
+  local domain="$1"
+  curl -fsS --max-time 5 -H "Host: ${domain}" "http://127.0.0.1/" >/dev/null 2>&1
+}
+
+preflight_before_certbot() {
+  local -a domains=("$DOMAIN")
+  local ok=true
+
+  if [[ "${INCLUDE_WWW:-false}" == true ]]; then
+    domains+=("www.${DOMAIN}")
+  fi
+
+  echo
+  echo "=== Preflight sebelum Certbot ==="
+
+  for d in "${domains[@]}"; do
+    if dns_resolves "$d"; then
+      echo "  [OK] DNS A record: ${d}"
+    else
+      echo "  [GAGAL] DNS tidak ditemukan (NXDOMAIN): ${d}" >&2
+      ok=false
+    fi
+
+    if dns_points_to_cloudflare "$d"; then
+      echo "  [INFO] ${d} proxied via Cloudflare (orange cloud)"
+      echo "         Pastikan origin server bisa diakses Cloudflare (port 80 terbuka, Nginx jalan)."
+      echo "         SSL mode Cloudflare: Flexible (origin HTTP) atau Full + sertifikat origin."
+      echo "         Alternatif: lewati Certbot, pakai SSL Cloudflare saja."
+    fi
+  done
+
+  if systemctl is-active --quiet nginx; then
+    echo "  [OK] Nginx service aktif"
+  else
+    echo "  [GAGAL] Nginx tidak aktif" >&2
+    ok=false
+  fi
+
+  if check_nginx_serves_domain "$DOMAIN"; then
+    echo "  [OK] Nginx merespons Host: ${DOMAIN} di localhost"
+  else
+    echo "  [GAGAL] Nginx tidak merespons Host: ${DOMAIN} di localhost" >&2
+    echo "         Cek config sites-enabled dan upstream/proxy target." >&2
+    ok=false
+  fi
+
+  if [[ "$ok" != true ]]; then
+    echo
+    echo "Preflight gagal. Perbaiki masalah di atas sebelum Certbot." >&2
+    echo
+    echo "Penyebab umum error 522 (Cloudflare):" >&2
+    echo "  - IP di DNS Cloudflare salah (bukan IP server ini)" >&2
+    echo "  - Firewall memblokir port 80" >&2
+    echo "  - Nginx belum listen / site belum di-enable" >&2
+    echo "  - Cloudflare SSL Full/Strict tapi origin tidak punya HTTPS" >&2
+    echo "  - Server tanpa IPv6 tapi Cloudflare coba koneksi IPv6" >&2
+    echo "    → Cloudflare Dashboard → Network → matikan IPv6 Compatibility" >&2
+    return 1
+  fi
+
+  echo "=== Preflight OK ==="
+  echo
+}
+
 site_config_path() {
   echo "${SITES_AVAILABLE}/$1"
 }
@@ -128,9 +217,26 @@ collect_common_input() {
   validate_domain "$DOMAIN" || die "Format domain tidak valid: $DOMAIN"
   site_exists "$DOMAIN" && die "Config untuk '$DOMAIN' sudah ada di ${SITES_AVAILABLE}/$DOMAIN"
 
-  if prompt_yes_no "Sertakan subdomain www (www.${DOMAIN})?" "n"; then
+  local www_default="n"
+  if is_likely_subdomain "$DOMAIN"; then
+    echo
+    echo "Catatan: '${DOMAIN}' terlihat sebagai subdomain."
+    echo "        www.${DOMAIN} jarang dipakai dan biasanya TIDAK perlu record DNS terpisah."
+    www_default="n"
+  fi
+
+  if prompt_yes_no "Sertakan www (www.${DOMAIN})?" "$www_default"; then
     INCLUDE_WWW=true
     SERVER_NAMES="$DOMAIN www.$DOMAIN"
+    if ! dns_resolves "www.${DOMAIN}"; then
+      echo
+      echo "PERINGATAN: www.${DOMAIN} belum ada di DNS (NXDOMAIN)."
+      echo "Tambahkan dulu via Cloudflare, atau jawab 'n' untuk www."
+      prompt_yes_no "Tetap sertakan www.${DOMAIN}?" "n" || {
+        INCLUDE_WWW=false
+        SERVER_NAMES="$DOMAIN"
+      }
+    fi
   else
     INCLUDE_WWW=false
     SERVER_NAMES="$DOMAIN"
@@ -181,7 +287,16 @@ collect_ssl_input() {
   ENABLE_SSL=false
   CERTBOT_EMAIL=""
 
-  if prompt_yes_no "Pasang SSL otomatis dengan Certbot?" "y"; then
+  local ssl_default="y"
+  if dns_points_to_cloudflare "$DOMAIN" 2>/dev/null; then
+    echo
+    echo "Domain terdeteksi proxied Cloudflare (orange cloud)."
+    echo "Disarankan: pakai SSL Cloudflare (Flexible) — LEWATI Certbot."
+    echo "Certbot HTTP challenge sering gagal (522) jika origin belum siap."
+    ssl_default="n"
+  fi
+
+  if prompt_yes_no "Pasang SSL otomatis dengan Certbot (Let's Encrypt)?" "$ssl_default"; then
     if ! command -v certbot >/dev/null 2>&1; then
       echo
       echo "Certbot belum terpasang."
@@ -267,6 +382,8 @@ enable_site() {
 }
 
 run_certbot() {
+  preflight_before_certbot
+
   local -a certbot_args=(
     --nginx
     -d "$DOMAIN"
@@ -276,12 +393,40 @@ run_certbot() {
     --redirect
   )
 
-  if [[ "$INCLUDE_WWW" == true ]]; then
+  if [[ "${INCLUDE_WWW:-false}" == true ]] && dns_resolves "www.${DOMAIN}"; then
     certbot_args+=(-d "www.$DOMAIN")
+  elif [[ "${INCLUDE_WWW:-false}" == true ]]; then
+    echo ">>> Lewati www.${DOMAIN} — tidak ada record DNS."
   fi
 
   echo ">>> Menjalankan Certbot..."
   certbot "${certbot_args[@]}"
+}
+
+retry_ssl() {
+  echo
+  echo "=== Jalankan ulang SSL (Certbot) ==="
+  list_domains
+  prompt DOMAIN "Domain yang akan dipasang SSL"
+  site_exists "$DOMAIN" || die "Config untuk '$DOMAIN' tidak ditemukan"
+
+  INCLUDE_WWW=false
+  if grep -q "www\.${DOMAIN//./\\.}" "$(site_config_path "$DOMAIN")" 2>/dev/null; then
+    INCLUDE_WWW=true
+  fi
+
+  if ! command -v certbot >/dev/null 2>&1; then
+    die "Certbot belum terpasang: sudo ./install_certbot_nginx.sh"
+  fi
+
+  prompt CERTBOT_EMAIL "Email untuk Let's Encrypt"
+  validate_email "$CERTBOT_EMAIL" || die "Format email tidak valid: $CERTBOT_EMAIL"
+
+  ENABLE_SSL=true
+  run_certbot
+  nginx -t
+  systemctl reload nginx
+  echo ">>> SSL selesai untuk ${DOMAIN}"
 }
 
 add_domain() {
@@ -374,7 +519,8 @@ show_main_menu() {
   echo "  1) Tambah domain baru"
   echo "  2) Lihat daftar domain"
   echo "  3) Hapus domain"
-  echo "  4) Keluar"
+  echo "  4) Jalankan ulang SSL (Certbot)"
+  echo "  5) Keluar"
   echo
 }
 
@@ -391,7 +537,8 @@ main() {
       1) add_domain ;;
       2) list_domains ;;
       3) remove_domain ;;
-      4) echo "Selesai."; exit 0 ;;
+      4) retry_ssl ;;
+      5) echo "Selesai."; exit 0 ;;
       *) echo "Pilihan tidak valid." ;;
     esac
   done
